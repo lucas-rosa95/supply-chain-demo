@@ -1,0 +1,2 @@
+# Forge/foundry test files — different conventions, not linted by solhint
+contracts/**/*.t.sol
