@@ -47,13 +47,6 @@ Work phase by phase. Do not start the next phase before the previous one is revi
 
 ---
 
-### Phase 0 — Cleanup ✅ Done
-
-- [x] Delete `scripts/send-op-tx.ts`
-- [x] Delete `ignition/modules/Counter.ts`
-
----
-
 ### Phase 1 — Solidity Foundation
 
 Implement in this order (each file depends on the previous):
