@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.35;
 
 /// @title ISupplyChainDemo
 /// @notice Interface for the SupplyChainDemo contract.
