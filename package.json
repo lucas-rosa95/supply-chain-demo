@@ -1,6 +1,7 @@
 {
   "name": "supply-chain-demo",
   "version": "1.0.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "compile": "hardhat compile",

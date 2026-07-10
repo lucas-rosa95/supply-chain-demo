@@ -33,13 +33,17 @@ enum BatchStatus { Created, Audited, InTransit, Delivered, Blocked }
 
 **Lifecycle**: `Created → Audited → InTransit → Delivered`. `Blocked` is **reversible** — `unblockBatch` returns the batch to its status before the block. **There is no recall concept.**
 
-**Events** (exact names): `BatchCreated`, `AuditLinked`, `CustodyPassed`, `DeliveryConfirmed`, `BatchBlocked`, `BatchUnblocked`.
+**Events** (exact names): `BatchCreated`, `AuditAnchored`, `CustodyPassed`, `DeliveryConfirmed`, `BatchBlocked`, `BatchUnblocked`. Events carry no explicit `timestamp` parameter — consumers read `block.timestamp` from the log's block. The block/unblock events name the actor as `blockedBy` / `unblockedBy`.
 
-**Custom errors** (in `contracts/libraries/SupplyChainErrors.sol`): `BatchAlreadyExists(bytes32)`, `BatchNotFound(bytes32)`, `Unauthorized(address caller, bytes32 role)`, `InvalidBatchStatus(bytes32 batchId, BatchStatus current, BatchStatus expected)`, `InvalidAddress(address)`.
+**Custom errors** (in `contracts/libraries/SupplyChainErrors.sol`): `BatchAlreadyExists(bytes32)`, `BatchNotFound(bytes32)`, `Unauthorized(address caller, bytes32 role)`, `InvalidBatchStatus(bytes32 batchId, BatchStatus current, BatchStatus expected)`, `BatchAlreadyBlocked(bytes32)`, `InvalidAddress(address)`.
 
-**Functions** (in `ISupplyChainDemo.sol`): `createBatch(bytes32 batchId, address receiver)`, `linkAudit(bytes32 batchId, bytes32 auditHash)`, `passCustody(bytes32 batchId, address carrier)`, `confirmDelivery(bytes32 batchId)`, `blockBatch(bytes32 batchId)`, `unblockBatch(bytes32 batchId)`, `getBatch(bytes32) → Batch`, `hasBatch(bytes32) → bool`.
+**Functions** (in `ISupplyChainDemo.sol`): `createBatch(bytes32 batchId, address receiver)`, `anchorAudit(bytes32 batchId, bytes32 auditHash)`, `passCustody(bytes32 batchId, address carrier)`, `confirmDelivery(bytes32 batchId)`, `blockBatch(bytes32 batchId)`, `unblockBatch(bytes32 batchId)`, `getBatch(bytes32) → Batch`, `hasBatch(bytes32) → bool`.
 
-> Do NOT reintroduce legacy names (`AuditAnchored`, `CustodyTransferred`, `BatchRecalled`, `UnauthorizedActor`). They are obsolete.
+> **Status semantics**: `blockBatch` is valid from any status except `Blocked` (re-blocking reverts `BatchAlreadyBlocked`); every other transition has a single valid source status and reverts `InvalidBatchStatus` otherwise (`unblockBatch` expects `Blocked`).
+
+> **State-machine enforcement**: transitions are enforced **imperatively** — the current state lives in `Batch.status`, and each transition guards its precondition via a single `private view` helper `_requireStatus(bytes32 id, BatchStatus expected)`. There is **no on-chain transition table** (a stored graph would cost gas without value for a fixed 5-state lifecycle); the state graph is documented, not stored (Phase 5 `domain-model.md` / `sequence-diagram.md`).
+
+> Do NOT reintroduce legacy names (`AuditLinked`, `linkAudit`, `CustodyTransferred`, `BatchRecalled`, `UnauthorizedActor`). They are obsolete.
 
 ## Security rules — always enforce
 

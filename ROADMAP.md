@@ -1,6 +1,6 @@
 # ROADMAP — supply-chain-demo
 
-> Last updated: 2026-07-09 · Status: **Phase 0 next** — foundation config needs a compiler fix; only the interface and errors library are implemented.
+> Last updated: 2026-07-10 · Status: **Phase 1 next** — Phase 0 done: compiler + pragma + solhint all aligned at `0.8.35`; project compiles and lints clean. Interface and errors library are settled (naming/semantics reviewed). Main contract not yet implemented.
 
 ## Context & goal
 
@@ -25,8 +25,8 @@ Conventions and domain details live in `AGENTS.md` (= `CLAUDE.md`). This file is
 | ------------------------------------------- | --------------------------------------------------- |
 | Tooling/config (package.json, tsconfig, solhint, prettier, .env.example) | ✅ Done                    |
 | `contracts/interfaces/ISupplyChainDemo.sol` | ✅ Done — enum, struct, events, function signatures |
-| `contracts/libraries/SupplyChainErrors.sol` | ✅ Done — 5 custom errors                            |
-| `hardhat.config.ts` compiler version        | ⚠️ Pins `0.8.28` while pragma requires `^0.8.35` — must fix (Phase 0) |
+| `contracts/libraries/SupplyChainErrors.sol` | ✅ Done — 6 custom errors (incl. `BatchAlreadyBlocked`) |
+| `hardhat.config.ts` compiler version        | ✅ `0.8.35` in both `default` and `production` profiles — compiles & lints clean |
 | `contracts/SupplyChainDemo.sol`             | ⬜ Empty — main contract not implemented             |
 | `contracts/SupplyChainDemo.t.sol`           | ⬜ Empty                                             |
 | `test/`, `scripts/`, `ignition/modules/`    | ⬜ Empty directories                                 |
@@ -36,22 +36,24 @@ Conventions and domain details live in `AGENTS.md` (= `CLAUDE.md`). This file is
 
 Sequential dependency. Do not start a phase before the previous one is reviewed and approved.
 
-### Phase 0 — Align foundation
-- [ ] Bump `hardhat.config.ts` solidity `version` `0.8.28 → 0.8.35` in **both** `default` and `production` profiles.
-- **Verify**: `npm run compile` (interface + errors compile), `npm run lint:sol` (clean).
+### Phase 0 — Align foundation ✅
+- [x] `hardhat.config.ts` solidity `version` is `0.8.35` in **both** `default` and `production` profiles (already aligned).
+- [x] Interface/errors naming & semantics settled: `anchorAudit`/`AuditAnchored` (was `linkAudit`/`AuditLinked`); events dropped the explicit `timestamp` param; `blockedBy`/`unblockedBy`; added `BatchAlreadyBlocked` for the re-block case.
+- **Verified**: `npm run compile` (solc 0.8.35, 2 real files compile; only warnings from the empty `SupplyChainDemo.sol` stub), `npm run lint:sol` (clean).
 
 ### Phase 1 — Main contract (`contracts/SupplyChainDemo.sol`)
 - [ ] `is ISupplyChainDemo, AccessControl, Pausable, ReentrancyGuard` (OpenZeppelin v5).
 - [ ] Role constants: `MANUFACTURER_ROLE`, `AUDITOR_ROLE`, `CARRIER_ROLE`, `RECEIVER_ROLE` (`bytes32 public constant`).
 - [ ] Implement the 6 transitions + `getBatch` / `hasBatch` per the interface.
 - [ ] Store the pre-block status so `unblockBatch` restores it.
+- [ ] Centralize status guards in a `private view` helper `_requireStatus(bytes32 id, BatchStatus expected)` that reverts `InvalidBatchStatus(id, current, expected)`. `blockBatch` uses the "valid from any status except `Blocked`" rule (revert `BatchAlreadyBlocked`). **No on-chain transition table** — the state graph is enforced by these guards and documented (not stored) in Phase 5.
 - [ ] Enforce all security rules from `AGENTS.md`: CEI, `address(0)` validation, role checks (revert `Unauthorized`), status guards (revert `InvalidBatchStatus`), duplicate/unknown id guards, event on every transition, full NatSpec.
 - **Verify**: `npm run compile`, `npm run lint:sol`.
 
 ### Phase 2 — Solidity/Forge tests (`contracts/SupplyChainDemo.t.sol`)
 - [ ] Inherit `forge-std/Test.sol`.
 - [ ] Happy paths: `Created → Audited → InTransit → Delivered`; and `... → Blocked → unblock` (restores prior status).
-- [ ] Reverts: wrong status → `InvalidBatchStatus`; wrong role (`vm.prank`) → `Unauthorized`; duplicate id → `BatchAlreadyExists`; unknown id → `BatchNotFound`; `address(0)` → `InvalidAddress`.
+- [ ] Reverts: wrong status → `InvalidBatchStatus`; re-blocking a `Blocked` batch → `BatchAlreadyBlocked`; wrong role (`vm.prank`) → `Unauthorized`; duplicate id → `BatchAlreadyExists`; unknown id → `BatchNotFound`; `address(0)` → `InvalidAddress`.
 - [ ] `vm.expectEmit` on every state transition.
 - **Verify**: `npm run test:sol`.
 
