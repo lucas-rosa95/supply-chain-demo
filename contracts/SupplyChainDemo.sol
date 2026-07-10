@@ -22,4 +22,28 @@ contract SupplyChainDemo is ISupplyChainDemo {
 
         return _batches[batchId];
     }
+
+    function createBatch(bytes32 batchId, address receiver) external override {
+        if (receiver == address(0)) {
+            revert SupplyChainErrors.InvalidAddress(receiver);
+        }
+
+        if (_hasBatch(batchId)) {
+            revert SupplyChainErrors.BatchAlreadyExists(batchId);
+        }
+
+        _batches[batchId] = Batch({
+            batchId: batchId,
+            manufacturer: msg.sender,
+            auditor: address(0),
+            carrier: address(0),
+            receiver: receiver,
+            status: BatchStatus.Created,
+            auditHash: bytes32(0),
+            createdAt: block.timestamp,
+            updatedAt: block.timestamp
+        });
+
+        emit BatchCreated(batchId, msg.sender, receiver);
+    }
 }

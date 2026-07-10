@@ -1,6 +1,6 @@
 # Phase 1 — Main contract (`contracts/SupplyChainDemo.sol`) — Plano Executivo
 
-**Status**: Step 1 ✅ concluído; próximo: Step 2
+**Status**: Steps 1–2 ✅ concluídos; próximo: Step 3 (controle de acesso)
 
 ## Decisões de design (fixadas)
 
@@ -25,10 +25,12 @@
 
 Isso sincroniza a implementação com a validação desde o início.
 
+**Nota (Step 2) — testes de `createBatch` adiados para o Step 3:** decidimos NÃO escrever os testes de `createBatch` logo após implementá-lo, e sim adiá-los até depois de adicionar o controle de acesso (Step 3). Razão: sem roles, faltaria o caso `Unauthorized`, e a assinatura de comportamento da função muda quando as roles entram — testar agora significaria reescrever o teste em seguida (retrabalho). Regra geral derivada: quando uma seção introduz comportamento que uma seção seguinte iminente vai alterar, adiar o teste até a função atingir um estado "suficiente" (estável o bastante para não gerar retrabalho).
+
 ## Checklist de execução (modo tutor — construção por seção)
 
-- [ ] 1. **Modelo de dados puro** — contrato vazio `is ISupplyChainDemo`, `mapping(bytes32 => Batch) private _batches`, `getBatch`/`hasBatch` (view).
-- [ ] 2. **Primeira ação: `createBatch`** — validar `receiver != 0`, checar duplicidade, gravar `Batch`, emitir evento.
+- [x] 1. **Modelo de dados puro** — contrato vazio `is ISupplyChainDemo`, `mapping(bytes32 => Batch) private _batches`, `getBatch`/`hasBatch` (view).
+- [x] 2. **Primeira ação: `createBatch`** — validar `receiver != 0`, checar duplicidade, gravar `Batch`, emitir evento. **+ D3: `BatchCreated` ganhou `receiver` indexed.**
 - [ ] 3. **Controle de acesso** — `AccessControl`, roles (4), constructor, `_requireRole` helper.
 - [ ] 4. **Guarda de status + `anchorAudit`** — helpers `_requireStatus`/`_requireExists`, implementar `anchorAudit`.
 - [ ] 5. **`passCustody`** — com checagem de autoatesto.
@@ -45,6 +47,18 @@ Isso sincroniza a implementação com a validação desde o início.
 
 **D1 — Storage `_batches` como `private` + getter customizado, não `public`:**
 - Razão: A interface `ISupplyChainDemo` já declara a assinatura de `getBatch`. Embora o Solidity compilador gerasse automaticamente um getter se usássemos `mapping(bytes32 => Batch) public _batches`, a prática de encapsulamento (private + getter customizado) deixa aberto para validações futuras (ex: checagens de permissão, logging) sem quebrar a interface pública. Documentado aqui para evitar questões de auditores posteriores.
+
+**D3 — [DESCOBERTA DE IMPLEMENTAÇÃO] `BatchCreated` recebe `receiver` como 3º param indexed:**
+- Assinatura antiga: `event BatchCreated(bytes32 indexed batchId, address indexed manufacturer)`.
+- Assinatura nova: `event BatchCreated(bytes32 indexed batchId, address indexed manufacturer, address indexed receiver)`.
+- Contexto: descoberto DURANTE a implementação da Phase 1 (não era design pré-definido; a interface fora declarada "settled" na Phase 0). Ao implementar `createBatch`, questionou-se criticamente a completude do evento.
+- Razão: `BatchCreated` é o **único evento bipartite** do contrato — é a única operação que estabelece uma relação entre duas partes (manufacturer cria E designa o receiver na mesma tx), análogo a `Transfer(from, to, tokenId)` do ERC-721. Todos os outros eventos têm um único ator agindo sobre um batch existente. Incluir `receiver` indexed permite que um consumidor off-chain (dApp do receiver) filtre "quais lotes estão vindo para mim" direto dos logs, sem varrer todos os `BatchCreated` + chamar `getBatch` em cada. Precedente: `AuditAnchored` já carrega um 3º campo não-ator (`auditHash`), o dado crítico daquele evento; aqui o dado crítico é o destinatário.
+- Viabilidade técnica: 3 params indexed é o máximo do Solidity (batchId + manufacturer + receiver = 3, cabe); custo ~375 gas/topic extra, desprezível.
+- Impacto: alterada a interface `ISupplyChainDemo.sol` e a doc `CLAUDE.md`/`AGENTS.md`. Deve constar na auditoria final como acurácia de implementação.
+
+**D2 — Receiver designado na criação (push+confirm), não claim+approval:**
+- Contexto: O receiver é fixado pelo manufacturer em `createBatch(batchId, receiver)` e depois confirma a entrega em `confirmDelivery` (guardado por `msg.sender == batch.receiver`). Foi considerada uma alternativa de "claim + approval" (o receiver se declara via uma operação `claimReceiver`, e um ator responsável valida).
+- Decisão: manter push+confirm. Razões: (1) em supply chain o destino é conhecido na origem — há pedido/contrato prévio, ao contrário de marketplaces/leilões onde o comprador aparece depois, cenário em que claim+approval faria sentido; (2) segurança por construção — o receiver é fixado por quem tem autoridade (criador do lote) e ninguém pode se passar por ele, sem risco de "sequestro" de batch por claim aberto; (3) menos transações/gas e sem estados intermediários (batch "sem receiver"). O consentimento do receiver é implícito: se não reconhecer o batch, simplesmente não chama `confirmDelivery`. A "descoberta" de qual endereço corresponde a qual empresa é responsabilidade off-chain (modelo híbrido) — quando chega ao contrato, o endereço já é conhecido.
 
 ## Step 1 — Resumo do que foi feito
 

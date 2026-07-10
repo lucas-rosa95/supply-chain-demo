@@ -33,7 +33,7 @@ enum BatchStatus { Created, Audited, InTransit, Delivered, Blocked }
 
 **Lifecycle**: `Created → Audited → InTransit → Delivered`. `Blocked` is **reversible** — `unblockBatch` returns the batch to its status before the block. **There is no recall concept.**
 
-**Events** (exact names): `BatchCreated`, `AuditAnchored`, `CustodyPassed`, `DeliveryConfirmed`, `BatchBlocked`, `BatchUnblocked`. Events carry no explicit `timestamp` parameter — consumers read `block.timestamp` from the log's block. The block/unblock events name the actor as `blockedBy` / `unblockedBy`.
+**Events** (exact names): `BatchCreated`, `AuditAnchored`, `CustodyPassed`, `DeliveryConfirmed`, `BatchBlocked`, `BatchUnblocked`. Events carry no explicit `timestamp` parameter — consumers read `block.timestamp` from the log's block. The block/unblock events name the actor as `blockedBy` / `unblockedBy`. `BatchCreated` is the only **bipartite** event: it carries both the acting party and the designated counterparty — `BatchCreated(bytes32 indexed batchId, address indexed manufacturer, address indexed receiver)` — because batch creation both acts (manufacturer) and establishes a relationship (designates the receiver), analogous to ERC-721 `Transfer(from, to, tokenId)`; the third indexed `receiver` lets an off-chain consumer filter "batches destined to me" directly from logs. All other events name a single actor.
 
 **Custom errors** (in `contracts/libraries/SupplyChainErrors.sol`): `BatchAlreadyExists(bytes32)`, `BatchNotFound(bytes32)`, `Unauthorized(address caller, bytes32 role)`, `InvalidBatchStatus(bytes32 batchId, BatchStatus current, BatchStatus expected)`, `BatchAlreadyBlocked(bytes32)`, `InvalidAddress(address)`.
 
