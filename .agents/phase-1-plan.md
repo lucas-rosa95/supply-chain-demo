@@ -1,6 +1,6 @@
 # Phase 1 — Main contract (`contracts/SupplyChainDemo.sol`) — Plano Executivo
 
-**Status**: Steps 1–2 ✅ concluídos; próximo: Step 3 (controle de acesso)
+**Status**: Steps 1–4 ✅ concluídos; próximo: Step 5 (`passCustody`)
 
 ## Decisões de design (fixadas)
 
@@ -27,12 +27,14 @@ Isso sincroniza a implementação com a validação desde o início.
 
 **Nota (Step 2) — testes de `createBatch` adiados para o Step 3:** decidimos NÃO escrever os testes de `createBatch` logo após implementá-lo, e sim adiá-los até depois de adicionar o controle de acesso (Step 3). Razão: sem roles, faltaria o caso `Unauthorized`, e a assinatura de comportamento da função muda quando as roles entram — testar agora significaria reescrever o teste em seguida (retrabalho). Regra geral derivada: quando uma seção introduz comportamento que uma seção seguinte iminente vai alterar, adiar o teste até a função atingir um estado "suficiente" (estável o bastante para não gerar retrabalho).
 
+**Nota (Step 4) — RESTRIÇÃO do Solidity: contrato abstrato não deploya.** Um contrato que não implementa TODAS as funções da interface é `abstract` e não pode ser instanciado (`new SupplyChainDemo(...)`), logo não pode ser testado. `SupplyChainDemo` só fica concreto ao fim do Step 7 (todas as 6 funções de domínio implementadas). **Estratégia adotada**: escrever os testes de cada função IMEDIATAMENTE após implementá-la (memória fresca = teste preciso), mas RODAR toda a suíte de uma vez ao fim do Step 7, quando o contrato ficar concreto. Separar "escrever" (sem restrição) de "rodar" (exige concreto) preserva a precisão do teste-por-peça sem violar a regra do Solidity. O teste de `createBatch` já está escrito em `SupplyChainDemo.t.sol` (correto; ainda não roda).
+
 ## Checklist de execução (modo tutor — construção por seção)
 
 - [x] 1. **Modelo de dados puro** — contrato vazio `is ISupplyChainDemo`, `mapping(bytes32 => Batch) private _batches`, `getBatch`/`hasBatch` (view).
 - [x] 2. **Primeira ação: `createBatch`** — validar `receiver != 0`, checar duplicidade, gravar `Batch`, emitir evento. **+ D3: `BatchCreated` ganhou `receiver` indexed.**
-- [ ] 3. **Controle de acesso** — `AccessControl`, roles (4), constructor, `_requireRole` helper.
-- [ ] 4. **Guarda de status + `anchorAudit`** — helpers `_requireStatus`/`_requireExists`, implementar `anchorAudit`.
+- [x] 3. **Controle de acesso** — `AccessControl`, roles (4), constructor(admin), `_requireRole` helper, aplicado em `createBatch` (MANUFACTURER_ROLE). **+ D4: constructor recebe admin param.**
+- [x] 4. **Guarda de status + `anchorAudit`** — helpers `_requireStatus`/`_requireExists`, `getBatch` refatorado p/ `_requireExists`, `anchorAudit` (AUDITOR_ROLE, guarda `Created`→`Audited`, evento `AuditAnchored`). Sem validação de `auditHash` zero (decisão). Bug pego na revisão: `BatchAudited`→`AuditAnchored`.
 - [ ] 5. **`passCustody`** — com checagem de autoatesto.
 - [ ] 6. **`confirmDelivery`** — com checagem de receiver match.
 - [ ] 7. **`blockBatch` / `unblockBatch`** — mapping `_preBlockStatus`, regra "any except Blocked".
@@ -47,6 +49,10 @@ Isso sincroniza a implementação com a validação desde o início.
 
 **D1 — Storage `_batches` como `private` + getter customizado, não `public`:**
 - Razão: A interface `ISupplyChainDemo` já declara a assinatura de `getBatch`. Embora o Solidity compilador gerasse automaticamente um getter se usássemos `mapping(bytes32 => Batch) public _batches`, a prática de encapsulamento (private + getter customizado) deixa aberto para validações futuras (ex: checagens de permissão, logging) sem quebrar a interface pública. Documentado aqui para evitar questões de auditores posteriores.
+
+**D4 — Constructor recebe `admin` como parâmetro, não usa `msg.sender`:**
+- Assinatura: `constructor(address admin)` — valida `admin != address(0)` (`InvalidAddress`) e concede `DEFAULT_ADMIN_ROLE` ao endereço passado via `_grantRole` interno.
+- Razão: desacopla "quem faz o deploy" de "quem administra o contrato". Permite passar um endereço configurado (ex.: um multisig de governança) como admin no momento do deploy, em vez de forçar que o deployer (uma EOA qualquer, possivelmente descartável) seja o super-admin permanente. O módulo Hardhat Ignition da Phase 4 fornecerá esse endereço. Trade-off aceito: uma linha extra de validação e a responsabilidade de passar o endereço correto no deploy, em troca de flexibilidade e melhor postura de segurança (admin ≠ deployer).
 
 **D3 — [DESCOBERTA DE IMPLEMENTAÇÃO] `BatchCreated` recebe `receiver` como 3º param indexed:**
 - Assinatura antiga: `event BatchCreated(bytes32 indexed batchId, address indexed manufacturer)`.
