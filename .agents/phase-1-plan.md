@@ -1,6 +1,6 @@
 # Phase 1 — Main contract (`contracts/SupplyChainDemo.sol`) — Plano Executivo
 
-**Status**: Steps 1–5 ✅ concluídos; próximo: Step 6 (`confirmDelivery`). Interface refatorada (D5/D6/D7): `createBatch(batchId, receiver, carrier, auditor)`, `passCustody(batchId)`, auditor/carrier/receiver todos designados na criação.
+**Status**: Steps 1–6 ✅ concluídos; próximo: Step 7 (`blockBatch`/`unblockBatch`) — torna o contrato CONCRETO → rodamos toda a suíte. Interface refatorada (D5/D6/D7): `createBatch(batchId, receiver, carrier, auditor)`, `passCustody(batchId)`, auditor/carrier/receiver todos designados na criação.
 
 ## Decisões de design (fixadas)
 
@@ -36,7 +36,7 @@ Isso sincroniza a implementação com a validação desde o início.
 - [x] 3. **Controle de acesso** — `AccessControl`, roles (4), constructor(admin), `_requireRole` helper, aplicado em `createBatch` (MANUFACTURER_ROLE). **+ D4: constructor recebe admin param.**
 - [x] 4. **Guarda de status + `anchorAudit`** — helpers `_requireStatus`/`_requireExists`, `getBatch` refatorado p/ `_requireExists`, `anchorAudit` (AUDITOR_ROLE, guarda `Created`→`Audited`, evento `AuditAnchored`). Sem validação de `auditHash` zero (decisão). Bug pego na revisão: `BatchAudited`→`AuditAnchored`.
 - [x] 5. **`passCustody`** — carrier designado na criação atesta aceitação (`msg.sender == batch.carrier`), `Audited → InTransit`. Dupla checagem role + identidade. Testes escritos (happy + 4 reverts). **Refatoração D5/D6/D7: handshake via designação na criação, auditor vinculado, param removido.**
-- [ ] 6. **`confirmDelivery`** — com checagem de receiver match.
+- [x] 6. **`confirmDelivery`** — receiver designado atesta (`msg.sender == batch.receiver`), `InTransit → Delivered`. Dupla checagem role + identidade (simétrico ao `passCustody`). Testes escritos (happy + 4 reverts).
 - [ ] 7. **`blockBatch` / `unblockBatch`** — mapping `_preBlockStatus`, regra "any except Blocked".
 - [ ] 8. **Cross-cutting: `Pausable`** — adicionar herança, modifiers, `pause()`/`unpause()`.
 - [ ] 9. **Cross-cutting: `ReentrancyGuard`** — adicionar herança, modifiers.

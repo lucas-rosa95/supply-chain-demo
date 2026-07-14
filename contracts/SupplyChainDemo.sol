@@ -130,4 +130,22 @@ contract SupplyChainDemo is ISupplyChainDemo, AccessControl {
 
         emit CustodyPassed(batchId, msg.sender);
     }
+
+    function confirmDelivery(bytes32 batchId) external override {
+        _requireRole(RECEIVER_ROLE);
+        _requireExists(batchId);
+
+        Batch storage batch = _batches[batchId];
+
+        if (msg.sender != batch.receiver) {
+            revert SupplyChainErrors.Unauthorized(msg.sender, RECEIVER_ROLE);
+        }
+
+        _requireStatus(batchId, BatchStatus.InTransit);
+
+        batch.status = BatchStatus.Delivered;
+        batch.updatedAt = block.timestamp;
+
+        emit DeliveryConfirmed(batchId, msg.sender);
+    }
 }

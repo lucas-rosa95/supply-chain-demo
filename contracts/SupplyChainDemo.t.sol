@@ -12,6 +12,7 @@ contract SupplyChainDemoTest is Test {
     address internal admin = makeAddr("admin");
     address internal manufacturer = makeAddr("manufacturer");
     address internal receiver = makeAddr("receiver");
+    address internal otherReceiver = makeAddr("otherReceiver");
     address internal carrier = makeAddr("carrier");
     address internal otherCarrier = makeAddr("otherCarrier");
     address internal stranger = makeAddr("stranger");
@@ -31,6 +32,7 @@ contract SupplyChainDemoTest is Test {
     );
     event AuditAnchored(bytes32 indexed batchId, address indexed auditor, bytes32 auditHash);
     event CustodyPassed(bytes32 indexed batchId, address indexed carrier);
+    event DeliveryConfirmed(bytes32 indexed batchId, address indexed receiver);
 
     function setUp() public {
         demo = new SupplyChainDemo(admin);
@@ -54,6 +56,14 @@ contract SupplyChainDemoTest is Test {
         // admin grants the carrier role to a second carrier (not the designated one)
         vm.prank(admin);
         demo.grantRole(demo.CARRIER_ROLE(), otherCarrier);
+
+        // admin grants the receiver role
+        vm.prank(admin);
+        demo.grantRole(demo.RECEIVER_ROLE(), receiver);
+
+        // admin grants the receiver role to a second receiver (not the designated one)
+        vm.prank(admin);
+        demo.grantRole(demo.RECEIVER_ROLE(), otherReceiver);
     }
 
     // --- createBatch ---
@@ -274,5 +284,90 @@ contract SupplyChainDemoTest is Test {
         );
         vm.prank(carrier);
         demo.passCustody(BATCH_ID);
+    }
+
+    // --- confirmDelivery ---
+
+    function test_ConfirmDelivery_Success() public {
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+        vm.prank(auditor);
+        demo.anchorAudit(BATCH_ID, AUDIT_HASH);
+        vm.prank(carrier);
+        demo.passCustody(BATCH_ID);
+
+        vm.expectEmit(true, true, false, false);
+        emit DeliveryConfirmed(BATCH_ID, receiver);
+
+        vm.prank(receiver);
+        demo.confirmDelivery(BATCH_ID);
+
+        ISupplyChainDemo.Batch memory batch = demo.getBatch(BATCH_ID);
+        assertEq(uint256(batch.status), uint256(ISupplyChainDemo.BatchStatus.Delivered));
+        assertEq(batch.receiver, receiver);
+    }
+
+    function test_ConfirmDelivery_RevertWhen_Unauthorized() public {
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+        vm.prank(auditor);
+        demo.anchorAudit(BATCH_ID, AUDIT_HASH);
+        vm.prank(carrier);
+        demo.passCustody(BATCH_ID);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SupplyChainErrors.Unauthorized.selector,
+                stranger,
+                demo.RECEIVER_ROLE()
+            )
+        );
+        vm.prank(stranger);
+        demo.confirmDelivery(BATCH_ID);
+    }
+
+    function test_ConfirmDelivery_RevertWhen_NotDesignatedReceiver() public {
+        // batch designates `receiver`; otherReceiver has the role but is not the designated one
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+        vm.prank(auditor);
+        demo.anchorAudit(BATCH_ID, AUDIT_HASH);
+        vm.prank(carrier);
+        demo.passCustody(BATCH_ID);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SupplyChainErrors.Unauthorized.selector,
+                otherReceiver,
+                demo.RECEIVER_ROLE()
+            )
+        );
+        vm.prank(otherReceiver);
+        demo.confirmDelivery(BATCH_ID);
+    }
+
+    function test_ConfirmDelivery_RevertWhen_BatchNotFound() public {
+        vm.expectRevert(abi.encodeWithSelector(SupplyChainErrors.BatchNotFound.selector, BATCH_ID));
+        vm.prank(receiver);
+        demo.confirmDelivery(BATCH_ID);
+    }
+
+    function test_ConfirmDelivery_RevertWhen_WrongStatus() public {
+        // audited but not yet in transit: status is Audited, not InTransit
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+        vm.prank(auditor);
+        demo.anchorAudit(BATCH_ID, AUDIT_HASH);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SupplyChainErrors.InvalidBatchStatus.selector,
+                BATCH_ID,
+                ISupplyChainDemo.BatchStatus.Audited, // current
+                ISupplyChainDemo.BatchStatus.InTransit // expected
+            )
+        );
+        vm.prank(receiver);
+        demo.confirmDelivery(BATCH_ID);
     }
 }
