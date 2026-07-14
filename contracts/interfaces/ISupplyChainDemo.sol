@@ -28,7 +28,9 @@ interface ISupplyChainDemo {
     event BatchCreated(
         bytes32 indexed batchId,
         address indexed manufacturer,
-        address indexed receiver
+        address indexed receiver,
+        address carrier,
+        address auditor
     );
     event AuditAnchored(bytes32 indexed batchId, address indexed auditor, bytes32 auditHash);
     event CustodyPassed(bytes32 indexed batchId, address indexed carrier);
@@ -36,11 +38,16 @@ interface ISupplyChainDemo {
     event BatchBlocked(bytes32 indexed batchId, address indexed blockedBy);
     event BatchUnblocked(bytes32 indexed batchId, address indexed unblockedBy);
 
-    function createBatch(bytes32 batchId, address receiver) external;
+    function createBatch(
+        bytes32 batchId,
+        address receiver,
+        address carrier,
+        address auditor
+    ) external;
 
     function anchorAudit(bytes32 batchId, bytes32 auditHash) external;
 
-    function passCustody(bytes32 batchId, address carrier) external;
+    function passCustody(bytes32 batchId) external;
 
     function confirmDelivery(bytes32 batchId) external;
 

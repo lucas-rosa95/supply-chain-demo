@@ -1,6 +1,6 @@
 # Phase 1 — Main contract (`contracts/SupplyChainDemo.sol`) — Plano Executivo
 
-**Status**: Steps 1–4 ✅ concluídos; próximo: Step 5 (`passCustody`)
+**Status**: Steps 1–5 ✅ concluídos; próximo: Step 6 (`confirmDelivery`). Interface refatorada (D5/D6/D7): `createBatch(batchId, receiver, carrier, auditor)`, `passCustody(batchId)`, auditor/carrier/receiver todos designados na criação.
 
 ## Decisões de design (fixadas)
 
@@ -35,7 +35,7 @@ Isso sincroniza a implementação com a validação desde o início.
 - [x] 2. **Primeira ação: `createBatch`** — validar `receiver != 0`, checar duplicidade, gravar `Batch`, emitir evento. **+ D3: `BatchCreated` ganhou `receiver` indexed.**
 - [x] 3. **Controle de acesso** — `AccessControl`, roles (4), constructor(admin), `_requireRole` helper, aplicado em `createBatch` (MANUFACTURER_ROLE). **+ D4: constructor recebe admin param.**
 - [x] 4. **Guarda de status + `anchorAudit`** — helpers `_requireStatus`/`_requireExists`, `getBatch` refatorado p/ `_requireExists`, `anchorAudit` (AUDITOR_ROLE, guarda `Created`→`Audited`, evento `AuditAnchored`). Sem validação de `auditHash` zero (decisão). Bug pego na revisão: `BatchAudited`→`AuditAnchored`.
-- [ ] 5. **`passCustody`** — com checagem de autoatesto.
+- [x] 5. **`passCustody`** — carrier designado na criação atesta aceitação (`msg.sender == batch.carrier`), `Audited → InTransit`. Dupla checagem role + identidade. Testes escritos (happy + 4 reverts). **Refatoração D5/D6/D7: handshake via designação na criação, auditor vinculado, param removido.**
 - [ ] 6. **`confirmDelivery`** — com checagem de receiver match.
 - [ ] 7. **`blockBatch` / `unblockBatch`** — mapping `_preBlockStatus`, regra "any except Blocked".
 - [ ] 8. **Cross-cutting: `Pausable`** — adicionar herança, modifiers, `pause()`/`unpause()`.
@@ -61,6 +61,29 @@ Isso sincroniza a implementação com a validação desde o início.
 - Razão: `BatchCreated` é o **único evento bipartite** do contrato — é a única operação que estabelece uma relação entre duas partes (manufacturer cria E designa o receiver na mesma tx), análogo a `Transfer(from, to, tokenId)` do ERC-721. Todos os outros eventos têm um único ator agindo sobre um batch existente. Incluir `receiver` indexed permite que um consumidor off-chain (dApp do receiver) filtre "quais lotes estão vindo para mim" direto dos logs, sem varrer todos os `BatchCreated` + chamar `getBatch` em cada. Precedente: `AuditAnchored` já carrega um 3º campo não-ator (`auditHash`), o dado crítico daquele evento; aqui o dado crítico é o destinatário.
 - Viabilidade técnica: 3 params indexed é o máximo do Solidity (batchId + manufacturer + receiver = 3, cabe); custo ~375 gas/topic extra, desprezível.
 - Impacto: alterada a interface `ISupplyChainDemo.sol` e a doc `CLAUDE.md`/`AGENTS.md`. Deve constar na auditoria final como acurácia de implementação.
+
+**D7 — [DESCOBERTA DE IMPLEMENTAÇÃO] Auditor vinculado (designado na criação), fechando o gap de captura do `anchorAudit`:**
+- Problema identificado: `anchorAudit` estava "aberto" — qualquer endereço com `AUDITOR_ROLE` podia ancorar em qualquer batch em `Created`. Como a transição é mão-única e terminal (não há re-auditoria), um auditor autorizado malicioso podia fazer front-run e ancorar um hash errado, travando o batch (griefing/DoS dentro da fronteira de confiança).
+- Decisão: sob o bar de produção (ver [[production-grade-rigor]]), FECHAR o gap em vez de só documentar — vincular o auditor. O manufacturer designa o `auditor` no `createBatch` (junto de receiver e carrier); `anchorAudit` passa a exigir `msg.sender == batch.auditor` (além de `AUDITOR_ROLE` e status). Simétrico ao carrier/receiver: os três atores downstream são designados na criação e cada um age na sua vez, guardado por role + identidade + status.
+- Coerência: fechar o gap do carrier e deixar o do auditor aberto seria inconsistente. Ambos têm o mesmo padrão estrutural; ambos são fechados por binding.
+- Resíduo aceito (documentar, não é gap estrutural): o auditor DESIGNADO, se malicioso, ainda pode ancorar hash errado — confiança irredutível na parte contratada, com accountability on-chain (identidade registrada). Diferente do gap de captura por qualquer role-holder, este não tem fix limpo.
+- Impacto na interface: `createBatch(bytes32, address receiver, address carrier, address auditor)`; `BatchCreated` ganha `auditor` como dado não-indexed (auditor já é indexed no `AuditAnchored`, seu evento de ação); `anchorAudit` ganha o check de identidade e para de gravar `batch.auditor`.
+
+**D5 — [DESCOBERTA DE IMPLEMENTAÇÃO] Handshake bilateral de custódia via designação na criação:**
+- Contexto: ao implementar `passCustody`, questionou-se se o carrier deveria auto-declarar-se (claim) ou ser designado. Discussão sênior concluiu que custódia = aceitação de responsabilidade (liability) e não pode ser imposta, logo exige atesto do carrier; MAS o negócio também quer que o manufacturer escolha o carrier (handshake tipo bill-of-lading, assinado pelos dois lados).
+- Solução adotada (a mais simples que satisfaz ambos): o **manufacturer designa o carrier já no `createBatch`** (junto do receiver), e o **carrier atesta a aceitação no `passCustody`** (`msg.sender == batch.carrier`). Consentimento bilateral preservado SEM adicionar função (`assignCarrier` descartada), SEM novo status e SEM novo evento. Fica simétrico ao receiver (designado na criação, atesta em `confirmDelivery`).
+- Alternativa descartada: `assignCarrier` + novo status `CarrierAssigned` + novo evento. Rejeitada por over-engineering — adicionava um estado/função/evento para obter o mesmo consentimento bilateral que a designação-na-criação já entrega.
+- Trade-off aceito: o carrier precisa ser conhecido na origem (cenário real de logística contratada; premissa de modelagem do demo).
+- **Fundamento de domínio (nota fiscal):** designar receiver + carrier na criação não é conveniência de modelagem — espelha o instrumento legal real. Uma **nota fiscal** de produto a ser transportado já obriga o emitente (manufacturer) a declarar destinatário (receiver) e transportadora (carrier) na emissão, porque o transportador sai fisicamente com o produto + a nota. O `createBatch` é o análogo on-chain da emissão da nota. O `auditor` (D7) não é campo fiscal literal — é adição do nosso sistema — mas segue o mesmo padrão "papéis definidos no início do processo".
+- Impacto na interface: `createBatch(bytes32, address receiver, address carrier)` (ganha `carrier`); `passCustody(bytes32 batchId)` (perde o param `carrier`). Ver D6.
+
+**D6 — `passCustody` perde o parâmetro `carrier` (redundância eliminada):**
+- Assinatura antiga: `passCustody(bytes32 batchId, address carrier)`. Nova: `passCustody(bytes32 batchId)`.
+- Razão: com o carrier designado no `createBatch` (D5), o carrier passa a vir do storage; no `passCustody` o ator é sempre `msg.sender` (o carrier designado atestando). O parâmetro `carrier` era redundante (sempre teria que ser igual a `msg.sender`). Removê-lo elimina a redundância e uma superfície de erro. Diferente do `BatchCreated` (D3), aqui o param não agregava valor de indexação — `CustodyPassed` já indexa o carrier.
+
+**Nota threat-model (Phase 5) — role checada no ato, não na designação:** nem `RECEIVER_ROLE` nem `CARRIER_ROLE` são checadas no `createBatch`; a role é exigida quando a parte age (`confirmDelivery`/`passCustody`). Consequência: se o manufacturer designar um endereço sem a role correspondente, o batch pode ficar "preso" (não avança além do status onde aquela parte deveria agir). Aceito conscientemente por consistência (mesmo comportamento para receiver e carrier) e mitigável via `blockBatch`. Documentar no threat-model.
+
+**Nota — `carrier` no evento `BatchCreated` como NÃO-indexed:** `BatchCreated` já usa os 3 slots indexed máximos (batchId, manufacturer, receiver). O `carrier` entra como dado não-indexed. Trade-off aceito: NÃO é possível filtrar por topic "todos os batches designados a um carrier antes dele pegar a custódia" — o carrier só vira indexed no `CustodyPassed` (quando aceita). A nota D3 passa a valer para um evento que registra o plano completo (manufacturer → receiver, via carrier).
 
 **D2 — Receiver designado na criação (push+confirm), não claim+approval:**
 - Contexto: O receiver é fixado pelo manufacturer em `createBatch(batchId, receiver)` e depois confirma a entrega em `confirmDelivery` (guardado por `msg.sender == batch.receiver`). Foi considerada uma alternativa de "claim + approval" (o receiver se declara via uma operação `claimReceiver`, e um ator responsável valida).

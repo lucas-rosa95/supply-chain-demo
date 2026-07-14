@@ -55,11 +55,24 @@ contract SupplyChainDemo is ISupplyChainDemo, AccessControl {
         return _batches[batchId];
     }
 
-    function createBatch(bytes32 batchId, address receiver) external override {
+    function createBatch(
+        bytes32 batchId,
+        address receiver,
+        address carrier,
+        address auditor
+    ) external override {
         _requireRole(MANUFACTURER_ROLE);
 
         if (receiver == address(0)) {
             revert SupplyChainErrors.InvalidAddress(receiver);
+        }
+
+        if (carrier == address(0)) {
+            revert SupplyChainErrors.InvalidAddress(carrier);
+        }
+
+        if (auditor == address(0)) {
+            revert SupplyChainErrors.InvalidAddress(auditor);
         }
 
         if (_hasBatch(batchId)) {
@@ -69,8 +82,8 @@ contract SupplyChainDemo is ISupplyChainDemo, AccessControl {
         _batches[batchId] = Batch({
             batchId: batchId,
             manufacturer: msg.sender,
-            auditor: address(0),
-            carrier: address(0),
+            auditor: auditor,
+            carrier: carrier,
             receiver: receiver,
             status: BatchStatus.Created,
             auditHash: bytes32(0),
@@ -78,20 +91,43 @@ contract SupplyChainDemo is ISupplyChainDemo, AccessControl {
             updatedAt: block.timestamp
         });
 
-        emit BatchCreated(batchId, msg.sender, receiver);
+        emit BatchCreated(batchId, msg.sender, receiver, carrier, auditor);
     }
 
     function anchorAudit(bytes32 batchId, bytes32 auditHash) external override {
         _requireRole(AUDITOR_ROLE);
         _requireExists(batchId);
-        _requireStatus(batchId, BatchStatus.Created);
 
         Batch storage batch = _batches[batchId];
-        batch.auditor = msg.sender;
+
+        if (batch.auditor != msg.sender) {
+            revert SupplyChainErrors.Unauthorized(msg.sender, AUDITOR_ROLE);
+        }
+
+        _requireStatus(batchId, BatchStatus.Created);
+
         batch.auditHash = auditHash;
         batch.status = BatchStatus.Audited;
         batch.updatedAt = block.timestamp;
 
         emit AuditAnchored(batchId, msg.sender, auditHash);
+    }
+
+    function passCustody(bytes32 batchId) external override {
+        _requireRole(CARRIER_ROLE);
+        _requireExists(batchId);
+
+        Batch storage batch = _batches[batchId];
+
+        if (batch.carrier != msg.sender) {
+            revert SupplyChainErrors.Unauthorized(msg.sender, CARRIER_ROLE);
+        }
+
+        _requireStatus(batchId, BatchStatus.Audited);
+
+        batch.status = BatchStatus.InTransit;
+        batch.updatedAt = block.timestamp;
+
+        emit CustodyPassed(batchId, msg.sender);
     }
 }
