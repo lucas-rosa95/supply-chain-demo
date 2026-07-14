@@ -1,6 +1,6 @@
 # Phase 1 — Main contract (`contracts/SupplyChainDemo.sol`) — Plano Executivo
 
-**Status**: Steps 1–6 ✅ concluídos; próximo: Step 7 (`blockBatch`/`unblockBatch`) — torna o contrato CONCRETO → rodamos toda a suíte. Interface refatorada (D5/D6/D7): `createBatch(batchId, receiver, carrier, auditor)`, `passCustody(batchId)`, auditor/carrier/receiver todos designados na criação.
+**Status**: Steps 1–7 ✅ concluídos; contrato CONCRETO; **suíte Solidity 30/30 passando**. Próximo: Step 8 (`Pausable`). Interface refatorada (D3/D5/D6/D7/D8): `createBatch(batchId, receiver, carrier, auditor)`, `passCustody(batchId)`, bloqueio como `bool blocked`, enum sem `Blocked`.
 
 ## Decisões de design (fixadas)
 
@@ -12,7 +12,7 @@
 6. **Pausable**: `pause()`/`unpause()` com `onlyRole(DEFAULT_ADMIN_ROLE)`, `whenNotPaused` em todas as 6 funções de domínio.
 7. **ReentrancyGuard**: `nonReentrant` nas 6 funções (defesa em profundidade).
 8. **Existência**: `_batches[id].createdAt != 0`.
-9. **Pré-block status**: `mapping(bytes32 => BatchStatus) private _preBlockStatus`.
+9. **Bloqueio como flag booleana** (D8): `bool blocked` no struct `Batch` (ortogonal ao ciclo de vida), NÃO um status no enum. `Blocked` removido do enum. Guard `_requireNotBlocked` nas transições. (Descartado o antigo `_preBlockStatus` mapping.)
 
 ## Prática de testes integrados
 
@@ -37,7 +37,7 @@ Isso sincroniza a implementação com a validação desde o início.
 - [x] 4. **Guarda de status + `anchorAudit`** — helpers `_requireStatus`/`_requireExists`, `getBatch` refatorado p/ `_requireExists`, `anchorAudit` (AUDITOR_ROLE, guarda `Created`→`Audited`, evento `AuditAnchored`). Sem validação de `auditHash` zero (decisão). Bug pego na revisão: `BatchAudited`→`AuditAnchored`.
 - [x] 5. **`passCustody`** — carrier designado na criação atesta aceitação (`msg.sender == batch.carrier`), `Audited → InTransit`. Dupla checagem role + identidade. Testes escritos (happy + 4 reverts). **Refatoração D5/D6/D7: handshake via designação na criação, auditor vinculado, param removido.**
 - [x] 6. **`confirmDelivery`** — receiver designado atesta (`msg.sender == batch.receiver`), `InTransit → Delivered`. Dupla checagem role + identidade (simétrico ao `passCustody`). Testes escritos (happy + 4 reverts).
-- [ ] 7. **`blockBatch` / `unblockBatch`** — mapping `_preBlockStatus`, regra "any except Blocked".
+- [x] 7. **`blockBatch` / `unblockBatch`** — `bool blocked` (D8), admin-only, `BatchIsBlocked`/`BatchNotBlocked`, guard `_requireNotBlocked` nas 3 transições. Contrato CONCRETO. **Suíte 30/30 passando** (fix de setUp: `startPrank`/`stopPrank` — `vm.prank` era consumido pelo getter de role).
 - [ ] 8. **Cross-cutting: `Pausable`** — adicionar herança, modifiers, `pause()`/`unpause()`.
 - [ ] 9. **Cross-cutting: `ReentrancyGuard`** — adicionar herança, modifiers.
 - [ ] 10. **Polimento: NatSpec completo** — `@title`/`@author`/`@notice`/`@dev`/`@param`/`@return`.
@@ -61,6 +61,14 @@ Isso sincroniza a implementação com a validação desde o início.
 - Razão: `BatchCreated` é o **único evento bipartite** do contrato — é a única operação que estabelece uma relação entre duas partes (manufacturer cria E designa o receiver na mesma tx), análogo a `Transfer(from, to, tokenId)` do ERC-721. Todos os outros eventos têm um único ator agindo sobre um batch existente. Incluir `receiver` indexed permite que um consumidor off-chain (dApp do receiver) filtre "quais lotes estão vindo para mim" direto dos logs, sem varrer todos os `BatchCreated` + chamar `getBatch` em cada. Precedente: `AuditAnchored` já carrega um 3º campo não-ator (`auditHash`), o dado crítico daquele evento; aqui o dado crítico é o destinatário.
 - Viabilidade técnica: 3 params indexed é o máximo do Solidity (batchId + manufacturer + receiver = 3, cabe); custo ~375 gas/topic extra, desprezível.
 - Impacto: alterada a interface `ISupplyChainDemo.sol` e a doc `CLAUDE.md`/`AGENTS.md`. Deve constar na auditoria final como acurácia de implementação.
+
+**D8 — [DESCOBERTA DE IMPLEMENTAÇÃO] Bloqueio como flag booleana ortogonal, não como status do enum:**
+- Mudança: `Blocked` REMOVIDO do enum `BatchStatus` (fica `{ Created, Audited, InTransit, Delivered }`); adicionado `bool blocked` ao struct `Batch`.
+- Razão (clincher): "Blocked" não é uma fase do ciclo de vida — é um congelamento administrativo ortogonal que pode incidir sobre qualquer fase. É o análogo por-batch do `Pausable`: assim como "paused" é uma flag+guard (não um status do contrato), "blocked" deve ser flag (`bool blocked`) + guard (`_requireNotBlocked`), não um status. Modelar como status misturava dois eixos (ciclo de vida × override administrativo).
+- Vantagens: (1) restauração automática — o `status` nunca é sobrescrito, então "voltar ao status anterior" é grátis, elimina o mapping `_preBlockStatus` + save/restore + delete; (2) status real preservado — enquanto bloqueado, `batch.status` continua mostrando a fase verdadeira (num contrato de auditoria, não perder essa informação importa); (3) erros mais claros.
+- Custo: cada transição de ciclo de vida (`anchorAudit`, `passCustody`, `confirmDelivery`) ganha guard `_requireNotBlocked` (paralelo ao `whenNotPaused`); `createBatch` não precisa (batch novo nasce desbloqueado).
+- Erros: par simétrico `BatchIsBlocked(bytes32)` / `BatchNotBlocked(bytes32)`. `BatchIsBlocked` cobre OS DOIS casos "está bloqueado" (re-bloquear E operar num bloqueado — o guard das transições); `BatchNotBlocked` cobre "não está bloqueado" (unblock inválido). **`BatchAlreadyBlocked` REMOVIDO** — redundante com `BatchIsBlocked` (o contexto da função chamada já desambigua). `InvalidBatchStatus` deixa de ser usado no unblock.
+- Impacto: enum + struct na interface, 2 erros novos na lib, doc canônica (`AGENTS.md`). Mudança no enum "settled" da Phase 0, feita sob o bar de produção.
 
 **D7 — [DESCOBERTA DE IMPLEMENTAÇÃO] Auditor vinculado (designado na criação), fechando o gap de captura do `anchorAudit`:**
 - Problema identificado: `anchorAudit` estava "aberto" — qualquer endereço com `AUDITOR_ROLE` podia ancorar em qualquer batch em `Created`. Como a transição é mão-única e terminal (não há re-auditoria), um auditor autorizado malicioso podia fazer front-run e ancorar um hash errado, travando o batch (griefing/DoS dentro da fronteira de confiança).

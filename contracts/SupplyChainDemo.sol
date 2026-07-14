@@ -45,6 +45,12 @@ contract SupplyChainDemo is ISupplyChainDemo, AccessControl {
         }
     }
 
+    function _requireNotBlocked(bytes32 batchId) private view {
+        if (_batches[batchId].blocked) {
+            revert SupplyChainErrors.BatchIsBlocked(batchId);
+        }
+    }
+
     function hasBatch(bytes32 batchId) external view override returns (bool) {
         return _hasBatch(batchId);
     }
@@ -88,7 +94,8 @@ contract SupplyChainDemo is ISupplyChainDemo, AccessControl {
             status: BatchStatus.Created,
             auditHash: bytes32(0),
             createdAt: block.timestamp,
-            updatedAt: block.timestamp
+            updatedAt: block.timestamp,
+            blocked: false
         });
 
         emit BatchCreated(batchId, msg.sender, receiver, carrier, auditor);
@@ -100,10 +107,11 @@ contract SupplyChainDemo is ISupplyChainDemo, AccessControl {
 
         Batch storage batch = _batches[batchId];
 
-        if (batch.auditor != msg.sender) {
+        if (msg.sender != batch.auditor) {
             revert SupplyChainErrors.Unauthorized(msg.sender, AUDITOR_ROLE);
         }
 
+        _requireNotBlocked(batchId);
         _requireStatus(batchId, BatchStatus.Created);
 
         batch.auditHash = auditHash;
@@ -119,10 +127,11 @@ contract SupplyChainDemo is ISupplyChainDemo, AccessControl {
 
         Batch storage batch = _batches[batchId];
 
-        if (batch.carrier != msg.sender) {
+        if (msg.sender != batch.carrier) {
             revert SupplyChainErrors.Unauthorized(msg.sender, CARRIER_ROLE);
         }
 
+        _requireNotBlocked(batchId);
         _requireStatus(batchId, BatchStatus.Audited);
 
         batch.status = BatchStatus.InTransit;
@@ -141,11 +150,44 @@ contract SupplyChainDemo is ISupplyChainDemo, AccessControl {
             revert SupplyChainErrors.Unauthorized(msg.sender, RECEIVER_ROLE);
         }
 
+        _requireNotBlocked(batchId);
         _requireStatus(batchId, BatchStatus.InTransit);
 
         batch.status = BatchStatus.Delivered;
         batch.updatedAt = block.timestamp;
 
         emit DeliveryConfirmed(batchId, msg.sender);
+    }
+
+    function blockBatch(bytes32 batchId) external override {
+        _requireRole(DEFAULT_ADMIN_ROLE);
+        _requireExists(batchId);
+
+        Batch storage batch = _batches[batchId];
+
+        if (batch.blocked) {
+            revert SupplyChainErrors.BatchIsBlocked(batchId);
+        }
+
+        batch.blocked = true;
+        batch.updatedAt = block.timestamp;
+
+        emit BatchBlocked(batchId, msg.sender);
+    }
+
+    function unblockBatch(bytes32 batchId) external override {
+        _requireRole(DEFAULT_ADMIN_ROLE);
+        _requireExists(batchId);
+
+        Batch storage batch = _batches[batchId];
+
+        if (!batch.blocked) {
+            revert SupplyChainErrors.BatchNotBlocked(batchId);
+        }
+
+        batch.blocked = false;
+        batch.updatedAt = block.timestamp;
+
+        emit BatchUnblocked(batchId, msg.sender);
     }
 }

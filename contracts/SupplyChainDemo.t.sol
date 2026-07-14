@@ -33,37 +33,24 @@ contract SupplyChainDemoTest is Test {
     event AuditAnchored(bytes32 indexed batchId, address indexed auditor, bytes32 auditHash);
     event CustodyPassed(bytes32 indexed batchId, address indexed carrier);
     event DeliveryConfirmed(bytes32 indexed batchId, address indexed receiver);
+    event BatchBlocked(bytes32 indexed batchId, address indexed blockedBy);
+    event BatchUnblocked(bytes32 indexed batchId, address indexed unblockedBy);
 
     function setUp() public {
         demo = new SupplyChainDemo(admin);
 
-        // admin grants the manufacturer role
-        vm.prank(admin);
+        // admin grants the domain roles. startPrank/stopPrank keeps `admin` as the
+        // sender for the whole block — including the role-getter calls, which would
+        // otherwise consume a single vm.prank and leave grantRole running as the test.
+        vm.startPrank(admin);
         demo.grantRole(demo.MANUFACTURER_ROLE(), manufacturer);
-
-        // admin grants the auditor role
-        vm.prank(admin);
         demo.grantRole(demo.AUDITOR_ROLE(), auditor);
-
-        // admin grants the auditor role to a second auditor (not the designated one)
-        vm.prank(admin);
-        demo.grantRole(demo.AUDITOR_ROLE(), otherAuditor);
-
-        // admin grants the carrier role
-        vm.prank(admin);
+        demo.grantRole(demo.AUDITOR_ROLE(), otherAuditor); // second auditor, not the designated one
         demo.grantRole(demo.CARRIER_ROLE(), carrier);
-
-        // admin grants the carrier role to a second carrier (not the designated one)
-        vm.prank(admin);
-        demo.grantRole(demo.CARRIER_ROLE(), otherCarrier);
-
-        // admin grants the receiver role
-        vm.prank(admin);
+        demo.grantRole(demo.CARRIER_ROLE(), otherCarrier); // second carrier, not the designated one
         demo.grantRole(demo.RECEIVER_ROLE(), receiver);
-
-        // admin grants the receiver role to a second receiver (not the designated one)
-        vm.prank(admin);
-        demo.grantRole(demo.RECEIVER_ROLE(), otherReceiver);
+        demo.grantRole(demo.RECEIVER_ROLE(), otherReceiver); // second receiver, not the designated one
+        vm.stopPrank();
     }
 
     // --- createBatch ---
@@ -369,5 +356,129 @@ contract SupplyChainDemoTest is Test {
         );
         vm.prank(receiver);
         demo.confirmDelivery(BATCH_ID);
+    }
+
+    // --- blockBatch ---
+
+    function test_BlockBatch_Success() public {
+        // reach Audited to prove the real status is preserved while blocked
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+        vm.prank(auditor);
+        demo.anchorAudit(BATCH_ID, AUDIT_HASH);
+
+        vm.expectEmit(true, true, false, false);
+        emit BatchBlocked(BATCH_ID, admin);
+
+        vm.prank(admin);
+        demo.blockBatch(BATCH_ID);
+
+        ISupplyChainDemo.Batch memory batch = demo.getBatch(BATCH_ID);
+        assertTrue(batch.blocked);
+        // status is preserved (not overwritten): still Audited
+        assertEq(uint256(batch.status), uint256(ISupplyChainDemo.BatchStatus.Audited));
+    }
+
+    function test_BlockBatch_RevertWhen_Unauthorized() public {
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SupplyChainErrors.Unauthorized.selector,
+                stranger,
+                demo.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        vm.prank(stranger);
+        demo.blockBatch(BATCH_ID);
+    }
+
+    function test_BlockBatch_RevertWhen_BatchNotFound() public {
+        vm.expectRevert(abi.encodeWithSelector(SupplyChainErrors.BatchNotFound.selector, BATCH_ID));
+        vm.prank(admin);
+        demo.blockBatch(BATCH_ID);
+    }
+
+    function test_BlockBatch_RevertWhen_AlreadyBlocked() public {
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+
+        vm.prank(admin);
+        demo.blockBatch(BATCH_ID);
+
+        vm.expectRevert(abi.encodeWithSelector(SupplyChainErrors.BatchIsBlocked.selector, BATCH_ID));
+        vm.prank(admin);
+        demo.blockBatch(BATCH_ID);
+    }
+
+    // --- unblockBatch ---
+
+    function test_UnblockBatch_Success() public {
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+        vm.prank(auditor);
+        demo.anchorAudit(BATCH_ID, AUDIT_HASH);
+
+        vm.prank(admin);
+        demo.blockBatch(BATCH_ID);
+
+        vm.expectEmit(true, true, false, false);
+        emit BatchUnblocked(BATCH_ID, admin);
+
+        vm.prank(admin);
+        demo.unblockBatch(BATCH_ID);
+
+        ISupplyChainDemo.Batch memory batch = demo.getBatch(BATCH_ID);
+        assertFalse(batch.blocked);
+        // status restored automatically (it was never overwritten): still Audited
+        assertEq(uint256(batch.status), uint256(ISupplyChainDemo.BatchStatus.Audited));
+    }
+
+    function test_UnblockBatch_RevertWhen_Unauthorized() public {
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+        vm.prank(admin);
+        demo.blockBatch(BATCH_ID);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SupplyChainErrors.Unauthorized.selector,
+                stranger,
+                demo.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        vm.prank(stranger);
+        demo.unblockBatch(BATCH_ID);
+    }
+
+    function test_UnblockBatch_RevertWhen_BatchNotFound() public {
+        vm.expectRevert(abi.encodeWithSelector(SupplyChainErrors.BatchNotFound.selector, BATCH_ID));
+        vm.prank(admin);
+        demo.unblockBatch(BATCH_ID);
+    }
+
+    function test_UnblockBatch_RevertWhen_NotBlocked() public {
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+
+        vm.expectRevert(abi.encodeWithSelector(SupplyChainErrors.BatchNotBlocked.selector, BATCH_ID));
+        vm.prank(admin);
+        demo.unblockBatch(BATCH_ID);
+    }
+
+    // --- _requireNotBlocked guard on transitions ---
+
+    function test_Transition_RevertWhen_Blocked() public {
+        // batch is in Created (the right status for anchorAudit); only the block stops it
+        vm.prank(manufacturer);
+        demo.createBatch(BATCH_ID, receiver, carrier, auditor);
+
+        vm.prank(admin);
+        demo.blockBatch(BATCH_ID);
+
+        vm.expectRevert(abi.encodeWithSelector(SupplyChainErrors.BatchIsBlocked.selector, BATCH_ID));
+        vm.prank(auditor);
+        demo.anchorAudit(BATCH_ID, AUDIT_HASH);
     }
 }

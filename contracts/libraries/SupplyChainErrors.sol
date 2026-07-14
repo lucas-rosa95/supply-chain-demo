@@ -18,9 +18,10 @@ library SupplyChainErrors {
         ISupplyChainDemo.BatchStatus current,
         ISupplyChainDemo.BatchStatus expected
     );
-    /// @dev Thrown when attempting to block a batch that is already blocked.
-    error BatchAlreadyBlocked(bytes32 batchId);
-
+    /// @dev Thrown when attempting an operation on a batch that is blocked
+    error BatchIsBlocked(bytes32 batchId);
+    /// @dev Thrown when attempting to unblock a batch that is not blocked.
+    error BatchNotBlocked(bytes32 batchId);
     /// @dev Thrown when an address is invalid (e.g., zero address).
     error InvalidAddress(address addr);
 }

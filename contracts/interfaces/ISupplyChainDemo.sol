@@ -8,8 +8,7 @@ interface ISupplyChainDemo {
         Created,
         Audited,
         InTransit,
-        Delivered,
-        Blocked
+        Delivered
     }
 
     /// @notice record of a supply chain batch
@@ -23,6 +22,7 @@ interface ISupplyChainDemo {
         bytes32 auditHash;
         uint256 createdAt;
         uint256 updatedAt;
+        bool blocked;
     }
 
     event BatchCreated(
